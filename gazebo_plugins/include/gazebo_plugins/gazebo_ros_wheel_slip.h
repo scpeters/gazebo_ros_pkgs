@@ -46,6 +46,29 @@ namespace gazebo
 ///      - Description: Unitless slip compliance (slip / friction) in the
 ///           longitudinal direction. This value is applied to all wheels declared
 ///           in the WheelSlipPlugin.
+/// See the WheelSlipPlugin documentation at the following location for more details:
+/// http://osrf-distributions.s3.amazonaws.com/gazebo/api/11.0.0/classgazebo_1_1WheelSlipPlugin.html#details
+/**
+  Example Usage:
+  \code{.xml}
+    <!-- Plugin to set wheel slip parameters according to wheel speed -->
+    <plugin name="projector" filename="libgazebo_ros_wheel_speed.so">
+      <ros>
+        <namespace>wheel_slip_front</namespace>
+      </ros>
+      <wheel link_name="wheel_front_left">
+        <slip_compliance_lateral>0</slip_compliance_lateral>
+        <slip_compliance_longitudinal>0.1</slip_compliance_longitudinal>
+        <wheel_normal_force>100</wheel_normal_force>
+      </wheel>
+      <wheel link_name="wheel_front_right">
+        <slip_compliance_lateral>0</slip_compliance_lateral>
+        <slip_compliance_longitudinal>0.1</slip_compliance_longitudinal>
+        <wheel_normal_force>100</wheel_normal_force>
+      </wheel>
+    </plugin>
+  \endcode
+*/
 class GazeboRosWheelSlip : public WheelSlipPlugin
 {
     /// \brief Constructor
@@ -57,25 +80,9 @@ class GazeboRosWheelSlip : public WheelSlipPlugin
     /// \brief Load the plugin
     public: virtual void Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf);
 
-    /// \brief Custom callback queue thread
-    private: void QueueThread();
-
-    // Allow dynamic reconfiguration of wheel slip params
-    private: void configCallback(
-                    gazebo_plugins::WheelSlipConfig &config,
-                    uint32_t level);
-
-    /// \brief pointer to ros node
-    private: ros::NodeHandle *rosnode_;
-
-    /// \brief Dynamic reconfigure server.
-    private: dynamic_reconfigure::Server<gazebo_plugins::WheelSlipConfig>
-                    *dyn_srv_;
-
-    /// \brief for setting ROS name space
-    private: std::string robotNamespace_;
-    private: ros::CallbackQueue queue_;
-    private: boost::thread callbackQueueThread_;
+private:
+  /// Private data pointer
+  std::unique_ptr<GazeboRosWheelSlipPrivate> impl_;
 };
 }
 #endif

@@ -19,103 +19,85 @@
 #include <sdf/sdf.hh>
 
 #include "gazebo_plugins/gazebo_ros_wheel_slip.h"
+#include <gazebo_ros/node.hpp>
+#include <std_msgs/msg/bool.hpp>
 
 namespace gazebo
 {
+class GazeboRosWheelSlipPrivate
+{
+public:
+  /// A pointer to the GazeboROS node.
+  gazebo_ros::Node::SharedPtr ros_node_;
+
+  /// Handle to parameters callback
+  rclcpp::Node::OnSetParametersCallbackHandle::SharedPtr on_set_parameters_callback_handle_;
+};
 
 // Register this plugin with the simulator
 GZ_REGISTER_MODEL_PLUGIN(GazeboRosWheelSlip)
 
 /////////////////////////////////////////////////
 GazeboRosWheelSlip::GazeboRosWheelSlip()
+: impl_(std::make_unique<GazeboRosWheelSlipPrivate>())
 {
 }
 
 /////////////////////////////////////////////////
 GazeboRosWheelSlip::~GazeboRosWheelSlip()
 {
-  // Custom Callback Queue
-  this->queue_.clear();
-  this->queue_.disable();
-
-  delete this->dyn_srv_;
-
-  this->rosnode_->shutdown();
-  delete this->rosnode_;
 }
 
 /////////////////////////////////////////////////
-void GazeboRosWheelSlip::configCallback(
-  gazebo_plugins::WheelSlipConfig &config, uint32_t /*level*/)
-{
-  if (config.slip_compliance_unitless_lateral >= 0)
-  {
-    ROS_INFO_NAMED("wheel_slip", "Reconfigure request for the gazebo ros wheel_slip: %s. New lateral slip compliance: %.3e",
-             this->GetParentModel()->GetScopedName().c_str(),
-             config.slip_compliance_unitless_lateral);
-    this->SetSlipComplianceLateral(config.slip_compliance_unitless_lateral);
-  }
-  if (config.slip_compliance_unitless_longitudinal >= 0)
-  {
-    ROS_INFO_NAMED("wheel_slip", "Reconfigure request for the gazebo ros wheel_slip: %s. New longitudinal slip compliance: %.3e",
-             this->GetParentModel()->GetScopedName().c_str(),
-             config.slip_compliance_unitless_longitudinal);
-    this->SetSlipComplianceLongitudinal(config.slip_compliance_unitless_longitudinal);
-  }
-}
-
-/////////////////////////////////////////////////
-// Load the controller
 void GazeboRosWheelSlip::Load(physics::ModelPtr _parent, sdf::ElementPtr _sdf)
 {
-  // Load the plugin
-  WheelSlipPlugin::Load(_parent, _sdf);
+  // Initialize the WheelSlipPlugin first so its values are preferred unless the ros
+  // parameters are overridden by a launch file.
+  WheelSlipPlugin::Load(_model, _sdf);
 
-  if (_sdf->HasElement("robotNamespace"))
-  {
-    this->robotNamespace_ = _sdf->Get<std::string>("robotNamespace") + "/";
-  }
-  if (this->robotNamespace_.empty() ||
-      this->robotNamespace_ == "/" ||
-      this->robotNamespace_ == "//")
-  {
-    this->robotNamespace_ = "wheel_slip/";
-  }
-  this->robotNamespace_ = _parent->GetName() + "/" + this->robotNamespace_;
+  // Initialize ROS node
+  impl_->ros_node_ = gazebo_ros::Node::Get(_sdf);
 
-  // Init ROS
-  if (!ros::isInitialized())
-  {
-    ROS_FATAL_STREAM_NAMED("wheel_slip", "Not loading plugin since ROS hasn't been "
-          << "properly initialized.  Try starting gazebo with ros plugin:\n"
-          << "  gazebo -s libgazebo_ros_api_plugin.so\n");
-    return;
-  }
+  auto param_change_callback =
+    [this](std::vector<rclcpp::Parameter> parameters) {
+      auto result = rcl_interfaces::msg::SetParametersResult();
+      result.successful = true;
+      for (const auto & parameter : parameters) {
+        std::string param_name = parameter.get_name();
+        if (param_name == "slip_compliance_unitless_lateral") {
+          double slip = parameter.as_double();
+          if (slip >= 0.) {
+            RCLCPP_INFO(
+              impl_->ros_node_->get_logger(),
+              "New lateral slip compliance: %.3e", slip);
+            this->SetSlipComplianceLateral(slip);
+          }
+        } else if (param_name == "slip_compliance_unitless_longitudinal") {
+          double slip = parameter.as_double();
+          if (slip >= 0.) {
+            RCLCPP_INFO(
+              impl_->ros_node_->get_logger(),
+              "New longitudinal slip compliance: %.3e", slip);
+            this->SetSlipComplianceLongitudinal(slip);
+          }
+        } else {
+          RCLCPP_WARN(
+            impl_->ros_node_->get_logger(),
+            "Unrecognized parameter name[%s]", param_name.c_str());
+          result.successful = false;
+        }
+      }
+      return result;
+    };
 
-  this->rosnode_ = new ros::NodeHandle(this->robotNamespace_);
+  impl_->on_set_parameters_callback_handle_ = impl_->ros_node_->add_on_set_parameters_callback(
+    param_change_callback);
 
-  // set up dynamic reconfigure
-  dyn_srv_ =
-    new dynamic_reconfigure::Server<gazebo_plugins::WheelSlipConfig>
-    (*this->rosnode_);
-  dynamic_reconfigure::Server<gazebo_plugins::WheelSlipConfig>
-    ::CallbackType f =
-    boost::bind(&GazeboRosWheelSlip::configCallback, this, _1, _2);
-  dyn_srv_->setCallback(f);
-
-  // Custom Callback Queue
-  this->callbackQueueThread_ =
-    boost::thread(boost::bind(&GazeboRosWheelSlip::QueueThread, this));
+  // Declare parameters after adding callback so that callback will trigger immediately.
+  // Set negative values by default, which are ignored by the callback.
+  // This approach allows values specified in a launch file to override the SDF/URDF values.
+  impl_->ros_node_->declare_parameter("slip_compliance_unitless_lateral", -1.);
+  impl_->ros_node_->declare_parameter("slip_compliance_unitless_longitudinal", -1.);
 }
 
-/////////////////////////////////////////////////
-void GazeboRosWheelSlip::QueueThread()
-{
-  static const double timeout = 0.01;
-
-  while (this->rosnode_->ok())
-  {
-    this->queue_.callAvailable(ros::WallDuration(timeout));
-  }
-}
 }
